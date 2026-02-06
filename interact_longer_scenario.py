@@ -3,7 +3,6 @@ import glob
 import os
 import random
 import signal
-import sys
 import threading
 import time
 from io import BytesIO
@@ -270,6 +269,7 @@ async def run_odyssey():
             # Run 30s segment: start_stream + 2 interactions at 10s intervals
             for i, prompt in enumerate(INTERACTION_PROMPTS):
                 if should_shutdown:
+                    print(f"[SHUTDOWN] Breaking out of interaction loop (should_shutdown={should_shutdown})")
                     break
 
                 current_prompt = prompt
@@ -311,6 +311,8 @@ async def run_odyssey():
                 print("[FAL] Image not ready yet, reusing current pair")
                 # Keep fal_task alive, don't cancel — it'll be checked next segment
 
+        if should_shutdown:
+            print(f"[SHUTDOWN] Exited main loop (should_shutdown={should_shutdown})")
         print(f"\nCompleted {elapsed}s of streaming")
 
     except OdysseyAuthError:
@@ -320,10 +322,11 @@ async def run_odyssey():
     except asyncio.CancelledError:
         print("Stream cancelled")
     finally:
+        print(f"[SHUTDOWN] Disconnecting client (stream_active={stream_active})")
         await client.disconnect()
         stream_active = False
         current_prompt = ""
-        print("Done")
+        print(f"[SHUTDOWN] Done (stream_active={stream_active})")
 
 
 def start_odyssey_thread():
@@ -405,24 +408,27 @@ def index():
                 color: #9b59b6;
                 min-height: 1.2em;
             }
-            #start-btn {
+            .btn {
                 padding: 16px 48px;
                 font-size: 18px;
-                background: #4CAF50;
                 color: white;
                 border: none;
                 border-radius: 8px;
                 cursor: pointer;
                 margin: 40px 0;
             }
+            #start-btn { background: #4CAF50; }
             #start-btn:hover { background: #45a049; }
-            #start-btn:disabled { background: #555; cursor: default; }
+            #stop-btn { background: #e74c3c; }
+            #stop-btn:hover { background: #c0392b; }
+            .btn:disabled { background: #555; cursor: default; }
             .hidden { display: none !important; }
         </style>
     </head>
     <body>
         <h1>On the Phone - Live</h1>
-        <button id="start-btn" onclick="startSession()">Start Session</button>
+        <button id="start-btn" class="btn" onclick="startSession()">Start Session</button>
+        <button id="stop-btn" class="btn hidden" onclick="stopSession()">Stop</button>
         <img id="video" class="hidden" src="" alt="Video Stream">
         <div class="info">
             <div class="status" id="status">Press Start to begin</div>
@@ -438,12 +444,19 @@ def index():
                 try {
                     await fetch('/start_session', { method: 'POST' });
                     btn.classList.add('hidden');
+                    document.getElementById('stop-btn').classList.remove('hidden');
                     document.getElementById('video').src = '/video_feed';
                     document.getElementById('video').classList.remove('hidden');
                 } catch (e) {
                     btn.disabled = false;
                     btn.textContent = 'Start Session';
                 }
+            }
+            async function stopSession() {
+                const btn = document.getElementById('stop-btn');
+                btn.disabled = true;
+                btn.textContent = 'Stopping...';
+                await fetch('/stop_session', { method: 'POST' });
             }
             setInterval(async () => {
                 try {
@@ -453,7 +466,23 @@ def index():
                     const promptEl = document.getElementById('prompt');
                     const pairEl = document.getElementById('pair');
                     const falEl = document.getElementById('fal');
-                    if (!data.started) return;
+                    if (!data.started) {
+                        // Reset to initial state
+                        document.getElementById('start-btn').classList.remove('hidden');
+                        document.getElementById('start-btn').disabled = false;
+                        document.getElementById('start-btn').textContent = 'Start Session';
+                        document.getElementById('stop-btn').classList.add('hidden');
+                        document.getElementById('stop-btn').disabled = false;
+                        document.getElementById('stop-btn').textContent = 'Stop';
+                        document.getElementById('video').classList.add('hidden');
+                        document.getElementById('video').src = '';
+                        el.textContent = 'Press Start to begin';
+                        el.className = 'status';
+                        promptEl.textContent = '';
+                        pairEl.textContent = '';
+                        falEl.textContent = '';
+                        return;
+                    }
                     if (data.active) {
                         el.textContent = 'Stream Active';
                         el.className = 'status active';
@@ -487,6 +516,32 @@ def start_session():
     return jsonify({"ok": True})
 
 
+@app.route("/stop_session", methods=["POST"])
+def stop_session():
+    global should_shutdown, session_started, current_frame
+    global current_prompt, current_pair_label, fal_status
+    print("[STOP] Stop requested, setting should_shutdown=True")
+    should_shutdown = True
+    # Wait for the odyssey thread to actually finish
+    for i in range(30):  # up to 15 seconds
+        if not stream_active:
+            print(f"[STOP] Stream stopped after {i * 0.5}s")
+            break
+        print(f"[STOP] Waiting for stream to stop... ({i * 0.5}s, stream_active={stream_active})")
+        time.sleep(0.5)
+    # Reset state so a new session can start
+    print("[STOP] Resetting state")
+    should_shutdown = False
+    session_started = False
+    current_prompt = ""
+    current_pair_label = ""
+    fal_status = ""
+    with frame_lock:
+        current_frame = None
+    print("[STOP] Ready for new session")
+    return jsonify({"ok": True})
+
+
 @app.route("/stream_status")
 def stream_status():
     return jsonify({
@@ -507,10 +562,13 @@ def video_feed():
 
 def signal_handler(sig, frame):
     global should_shutdown, stream_active
-    print("\nShutting down...")
+    if should_shutdown:
+        # Second Ctrl+C: exit the server
+        print("\nForce exit.")
+        os._exit(0)
+    print("\nStopping stream (Ctrl+C again to exit server)...")
     should_shutdown = True
     stream_active = False
-    sys.exit(0)
 
 
 if __name__ == "__main__":
@@ -519,8 +577,4 @@ if __name__ == "__main__":
     print("Starting web server at http://127.0.0.1:5001")
     print("Press Start in the browser to begin the session")
 
-    try:
-        app.run(host="0.0.0.0", port=5001, debug=False, threaded=True)
-    except KeyboardInterrupt:
-        should_shutdown = True
-        stream_active = False
+    app.run(host="0.0.0.0", port=5001, debug=False, threaded=True)
