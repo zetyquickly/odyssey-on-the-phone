@@ -1,8 +1,7 @@
 # Odyssey On The Phone
 
-VIDEO DEMO https://www.youtube.com/watch?v=j7u_iINyK8Y 
+[![Video Demo](https://img.youtube.com/vi/j7u_iINyK8Y/maxresdefault.jpg)](https://www.youtube.com/watch?v=j7u_iINyK8Y)
 
-WEB DEMO https://stripier-unathletically-latisha.ngrok-free.dev
 
 ## Setup
 
