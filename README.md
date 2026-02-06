@@ -1,6 +1,8 @@
 # Odyssey On The Phone
 
-DEMO https://www.youtube.com/watch?v=j7u_iINyK8Y 
+VIDEO DEMO https://www.youtube.com/watch?v=j7u_iINyK8Y 
+
+WEB DEMO https://133f-50-175-150-150.ngrok-free.app/
 
 ## Setup
 

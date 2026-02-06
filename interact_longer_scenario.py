@@ -21,6 +21,7 @@ current_frame = None
 frame_lock = threading.Lock()
 stream_active = False
 should_shutdown = False
+session_started = False
 current_prompt = ""
 current_pair_label = ""
 fal_status = ""
@@ -46,7 +47,7 @@ SECONDS_PER_SEGMENT = SECONDS_PER_STEP * len(INTERACTION_PROMPTS)
 FAL_COMBINE_PROMPT = (
     "combine these two people calling on the phone into one image, "
     "there's a vertical line between them like a photo composition. "
-    "imagine each of them in the room"
+    "imagine each of them in the room. first person is on the left side, second person is on the right side. "
 )
 
 
@@ -404,18 +405,46 @@ def index():
                 color: #9b59b6;
                 min-height: 1.2em;
             }
+            #start-btn {
+                padding: 16px 48px;
+                font-size: 18px;
+                background: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                margin: 40px 0;
+            }
+            #start-btn:hover { background: #45a049; }
+            #start-btn:disabled { background: #555; cursor: default; }
+            .hidden { display: none !important; }
         </style>
     </head>
     <body>
         <h1>On the Phone - Live</h1>
-        <img src="/video_feed" alt="Video Stream">
+        <button id="start-btn" onclick="startSession()">Start Session</button>
+        <img id="video" class="hidden" src="" alt="Video Stream">
         <div class="info">
-            <div class="status" id="status">Waiting for stream...</div>
+            <div class="status" id="status">Press Start to begin</div>
             <div class="pair" id="pair"></div>
         </div>
         <div class="prompt" id="prompt"></div>
         <div class="fal" id="fal"></div>
         <script>
+            async function startSession() {
+                const btn = document.getElementById('start-btn');
+                btn.disabled = true;
+                btn.textContent = 'Starting...';
+                try {
+                    await fetch('/start_session', { method: 'POST' });
+                    btn.classList.add('hidden');
+                    document.getElementById('video').src = '/video_feed';
+                    document.getElementById('video').classList.remove('hidden');
+                } catch (e) {
+                    btn.disabled = false;
+                    btn.textContent = 'Start Session';
+                }
+            }
             setInterval(async () => {
                 try {
                     const res = await fetch('/stream_status');
@@ -424,6 +453,7 @@ def index():
                     const promptEl = document.getElementById('prompt');
                     const pairEl = document.getElementById('pair');
                     const falEl = document.getElementById('fal');
+                    if (!data.started) return;
                     if (data.active) {
                         el.textContent = 'Stream Active';
                         el.className = 'status active';
@@ -431,11 +461,11 @@ def index():
                         pairEl.textContent = data.pair || '';
                         falEl.textContent = data.fal ? 'FAL: ' + data.fal : '';
                     } else {
-                        el.textContent = 'Stream Ended';
+                        el.textContent = 'Connecting...';
                         el.className = 'status';
                         promptEl.textContent = '';
                         pairEl.textContent = '';
-                        falEl.textContent = '';
+                        falEl.textContent = data.fal || '';
                     }
                 } catch (e) {}
             }, 1000);
@@ -446,9 +476,21 @@ def index():
     return render_template_string(html)
 
 
+@app.route("/start_session", methods=["POST"])
+def start_session():
+    global session_started
+    if session_started:
+        return jsonify({"ok": False, "error": "Already started"})
+    session_started = True
+    odyssey_thread = threading.Thread(target=start_odyssey_thread, daemon=True)
+    odyssey_thread.start()
+    return jsonify({"ok": True})
+
+
 @app.route("/stream_status")
 def stream_status():
     return jsonify({
+        "started": session_started,
         "active": stream_active,
         "prompt": current_prompt,
         "pair": current_pair_label,
@@ -474,12 +516,8 @@ def signal_handler(sig, frame):
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
 
-    odyssey_thread = threading.Thread(target=start_odyssey_thread, daemon=True)
-    odyssey_thread.start()
-
-    segments = TOTAL_DURATION // SECONDS_PER_SEGMENT
     print("Starting web server at http://127.0.0.1:5001")
-    print(f"Running {segments} segments of {SECONDS_PER_SEGMENT}s each, {TOTAL_DURATION}s total")
+    print("Press Start in the browser to begin the session")
 
     try:
         app.run(host="0.0.0.0", port=5001, debug=False, threaded=True)
