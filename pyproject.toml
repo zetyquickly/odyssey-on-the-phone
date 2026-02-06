@@ -1,0 +1,39 @@
+[project]
+name = "odyssey-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=3.1.2",
+    "odyssey",
+    "opencv-python>=4.13.0.90",
+    "pillow>=12.1.0",
+    "fal-client",
+    "aiohttp>=3.13.3",
+]
+
+[tool.uv.sources]
+odyssey = { git = "https://github.com/odysseyml/odyssey-python.git" }
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.37.4",
+    "codespell>=2.4.1",
+    "pytest>=9.0.2",
+    "ruff>=0.15.0",
+]
+
+[tool.basedpyright]
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+reportUnknownParameterType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
+reportUnusedCallResult = false
+reportImplicitStringConcatenation = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
