@@ -162,34 +162,56 @@ def save_frame(frame):
 
 
 async def play_transition(last_frame_data, new_image_path, direction="left", duration=1.0, fps=30):
-    """Play a push transition between the last stream frame and the new image."""
+    """Play a push transition with blended overlap for the keeper person."""
     global current_frame
 
     old_img = Image.fromarray(last_frame_data)
     new_img = Image.open(new_image_path).resize(old_img.size)
+    new_img = Image.blend(old_img, new_img, 0.95)
 
     width, height = old_img.size
+    half = width // 2
     num_frames = int(duration * fps)
     frame_delay = duration / num_frames
 
+    # Gradient mask for the overlap blend zone (0=image2, 255=image1)
+    gradient_array = np.tile(np.linspace(0, 255, half, dtype=np.uint8), (height, 1))
+    gradient = Image.fromarray(gradient_array, mode="L")
+
+    # Build 1.5x canvas: [departing_half | keeper_blend | newcomer_half]
+    canvas = Image.new("RGB", (width + half, height))
+
     if direction == "left":
-        canvas = Image.new("RGB", (width * 2, height))
-        canvas.paste(old_img, (0, 0))
-        canvas.paste(new_img, (width, 0))
+        # Old: [A | B], New: [B | C] → Canvas: [A | B_blend | C]
+        canvas.paste(old_img.crop((0, 0, half, height)), (0, 0))
+        blended = Image.composite(
+            new_img.crop((0, 0, half, height)),
+            old_img.crop((half, 0, width, height)),
+            gradient,
+        )
+        canvas.paste(blended, (half, 0))
+        canvas.paste(new_img.crop((half, 0, width, height)), (width, 0))
     else:
-        canvas = Image.new("RGB", (width * 2, height))
-        canvas.paste(new_img, (0, 0))
-        canvas.paste(old_img, (width, 0))
+        # Old: [B | A], New: [C | B] → Canvas: [C | B_blend | A]
+        canvas.paste(new_img.crop((0, 0, half, height)), (0, 0))
+        blended = Image.composite(
+            old_img.crop((0, 0, half, height)),
+            new_img.crop((half, 0, width, height)),
+            gradient,
+        )
+        canvas.paste(blended, (half, 0))
+        canvas.paste(old_img.crop((half, 0, width, height)), (width, 0))
 
     for i in range(num_frames + 1):
         t = i / num_frames
         t = t * t * (3 - 2 * t)  # ease-in-out
-        offset = int(t * width)
 
         if direction == "left":
-            frame_img = canvas.crop((offset, 0, offset + width, height))
+            offset = int(t * half)  # 0 → half
         else:
-            frame_img = canvas.crop((width - offset, 0, width * 2 - offset, height))
+            offset = int((1 - t) * half)  # half → 0
+
+        frame_img = canvas.crop((offset, 0, offset + width, height))
 
         with frame_lock:
             current_frame = SyntheticFrame(np.array(frame_img))
